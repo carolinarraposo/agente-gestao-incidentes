@@ -1,10 +1,13 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import subprocess
 
 from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.graph import graph
-from src.database import create_tables, get_db
+from src.database import create_tables, get_db, engine
 from src.logger import logger
 from src.models import (
     MessageRequest,
@@ -20,16 +23,50 @@ from src.models import (
 )
 
 
+def _auto_import_context():
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(
+                "SELECT COUNT(*), MAX(imported_at) FROM context_documents"
+            ))
+            row = result.fetchone()
+            count = row[0]
+            last_import = row[1]
+
+        needs_import = False
+
+        if count == 0:
+            needs_import = True
+            logger.info("Contexto vazio — a importar dados de extração...")
+        elif last_import:
+            last = datetime.fromisoformat(str(last_import))
+            if datetime.utcnow() - last > timedelta(hours=12):
+                needs_import = True
+                logger.info("Dados de contexto desatualizados — a reimportar...")
+
+        if needs_import:
+            subprocess.run(["python", "import_context.py"], check=True)
+            logger.info("Importação de contexto concluída.")
+        else:
+            logger.info(f"Contexto atualizado ({count} documentos). Importação não necessária.")
+
+    except Exception as e:
+        logger.warning(f"Auto-import de contexto falhou | erro={e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_tables()
+    _auto_import_context()
+    yield
+
+
 app = FastAPI(
     title="Agente Inteligente para Gestão de Incidentes",
     description="API para triagem, encaminhamento e acompanhamento de incidentes urbanos.",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
-
-
-@app.on_event("startup")
-def startup_event():
-    create_tables()
 
 
 @app.get("/")
