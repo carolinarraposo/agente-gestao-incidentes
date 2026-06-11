@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+langgraph
+langchain
+langchain-google-genai
+langchain_groq
+google-generativeai
+pydantic
+sqlalchemy
+python-dotenv
+pytest
+httpx2

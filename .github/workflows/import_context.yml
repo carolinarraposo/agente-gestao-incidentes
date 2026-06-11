@@ -1,0 +1,45 @@
+name: Import Context Data
+
+on:
+  repository_dispatch:
+    types: [new-extraction-data]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout agent repository
+        uses: actions/checkout@v4
+
+      - name: Checkout extraction repository
+        uses: actions/checkout@v4
+        with:
+          repository: carolinarraposo/extracao-dados-covilha
+          token: ${{ secrets.AGENT_REPO_TOKEN }}
+          path: extracao_dados_covilha
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run context import
+        env:
+          EXTRACTION_RAW_PATH: ${{ github.workspace }}/extracao_dados_covilha/data/raw
+        run: echo "s" | python import_context.py
+
+      - name: Commit updated database
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add incidents.db
+          git commit -m "update context data from extraction" || echo "No changes to commit"
+          git push
