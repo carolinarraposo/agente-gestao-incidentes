@@ -101,8 +101,8 @@ class StatusUpdateDB(Base):
 # =========================
 
 class MessageRequest(BaseModel):
-    citizen_id: str = Field(..., example="citizen_001")
-    message: str = Field(..., example="Há um buraco enorme perto da escola.")
+    citizen_id: str = Field(..., json_schema_extra={"example": "citizen_001"})
+    message: str = Field(..., json_schema_extra={"example": "Há um buraco enorme perto da escola."})
 
 
 class MessageResponse(BaseModel):
@@ -136,13 +136,12 @@ class TicketResponse(BaseModel):
 
 
 class StatusUpdateRequest(BaseModel):
-    protocol: str = Field(..., example="INC-2026-0001")
-    status: TicketStatus = Field(..., example="em_execucao")
+    protocol: str = Field(..., json_schema_extra={"example": "INC-2026-0001"})
+    status: TicketStatus = Field(..., json_schema_extra={"example": "em_execucao"})
     message: Optional[str] = Field(
         default=None,
-        example="A equipa técnica já foi encaminhada para o local."
+        json_schema_extra={"example": "A equipa técnica já foi encaminhada para o local."}
     )
-
 
 class StatusHistoryDB(Base):
     __tablename__ = "status_history"
