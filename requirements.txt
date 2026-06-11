@@ -3,7 +3,7 @@ uvicorn
 langgraph
 langchain
 langchain-google-genai
-langchain_groq
+langchain-groq
 google-generativeai
 pydantic
 sqlalchemy
