@@ -32,7 +32,6 @@ from src.auth import (
     hash_password,
     verify_password,
     create_access_token,
-    require_cidadao,
     require_funcionario,
 )
 
@@ -156,7 +155,6 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
 def process_message(
     request: MessageRequest,
     db: Session = Depends(get_db),
-    current_user: UserDB = Depends(require_cidadao),
 ):
     logger.info(
         f"Pedido recebido | citizen_id={request.citizen_id} | message={request.message}"
@@ -359,7 +357,6 @@ def get_incidents(
 def get_ticket(
     protocol: str,
     db: Session = Depends(get_db),
-    current_user: UserDB = Depends(require_cidadao),
 ):
 
     incident = (
@@ -390,7 +387,6 @@ def get_ticket(
 def get_history(
     protocol: str,
     db: Session = Depends(get_db),
-    current_user: UserDB = Depends(require_cidadao),
 ):
 
     incident = (
@@ -449,7 +445,6 @@ def get_citizen_updates(
     citizen_id: str,
     since_hours: int = 24,
     db: Session = Depends(get_db),
-    current_user: UserDB = Depends(require_cidadao),
 ):
     since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=since_hours)
 
