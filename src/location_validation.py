@@ -19,6 +19,8 @@ def _extract_street_candidate(location: str) -> str:
         location,
         flags=re.IGNORECASE
     )
+    # Remove sufixo ", Covilhã" ou ", covilha" adicionado pelo LLM
+    cleaned = re.sub(r",?\s*covilh[aã]\b", "", cleaned, flags=re.IGNORECASE)
     # Remove número de porta e código postal
     cleaned = re.sub(r"\b\d{4}-\d{3}\b", "", cleaned)
     cleaned = re.sub(r"\bn[oº°]?\s*\d+\b", "", cleaned, flags=re.IGNORECASE)

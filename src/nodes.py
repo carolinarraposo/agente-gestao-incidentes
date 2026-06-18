@@ -244,16 +244,16 @@ def check_missing_data(state: AgentState):
             missing_fields.append("location_clarification")
             clarification_question = location_clarification_question
 
-        elif not has_sufficient_description:
-            missing_fields.append("description_clarification")
-            clarification_question = description_clarification_question
-
         else:
             # Fase 2b: validação determinística da rua contra o dataset
+            # Corre sempre que há localização — sobrepõe-se ao LLM para casos ambíguos
             db_status, db_question = validate_location(location or "")
             if db_status == "ambiguous":
                 missing_fields.append("location_ambiguous")
                 clarification_question = db_question
+            elif not has_sufficient_description:
+                missing_fields.append("description_clarification")
+                clarification_question = description_clarification_question
 
         if not missing_fields:
             # Fase 3: campos estruturados por categoria
