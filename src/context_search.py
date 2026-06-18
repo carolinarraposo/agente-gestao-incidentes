@@ -40,6 +40,16 @@ def _keywords_from_incident(
         "lixo": ["lixo", "resíduos", "contentor", "limpeza", "recolha"],
         "dengue": ["dengue", "mosquito", "mosquitos", "saúde", "foco"],
         "saneamento": ["esgoto", "saneamento", "água", "drenagem", "canos"],
+        "incendio": ["incêndio", "incendio", "fogo", "fumo", "chamas"],
+        "neve": ["neve", "gelo", "geada", "estrada cortada", "frio"],
+        "arvore": ["árvore", "arvore", "ramo", "queda", "tronco"],
+        "estrutura": ["estrutura", "colapso", "desabamento", "fissura", "muro"],
+        "ruido": ["ruído", "ruido", "barulho", "som", "obras"],
+        "vandalismo": ["vandalismo", "graffiti", "grafiti", "pichação", "danos"],
+        "estacionamento": ["estacionamento", "carro", "veículo", "abandonado", "via"],
+        "animais": ["animal", "animais", "cão", "gato", "abandonado"],
+        "agua": ["água", "agua", "fuga", "rede", "abastecimento"],
+        "sinalizacao": ["sinalização", "sinalizacao", "sinal", "trânsito", "placa"],
         "outros": [],
     }
 

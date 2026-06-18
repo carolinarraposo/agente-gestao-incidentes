@@ -1,5 +1,5 @@
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 
 from pydantic import BaseModel, Field
@@ -16,6 +16,8 @@ from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # =========================
 # Enums
@@ -25,13 +27,25 @@ class IncidentType(str, Enum):
     BURACO = "buraco"
     ILUMINACAO = "iluminacao"
     LIXO = "lixo"
+    DENGUE = "dengue"
     SANEAMENTO = "saneamento"
+    INCENDIO = "incendio"
+    NEVE = "neve"
+    ARVORE = "arvore"
+    ESTRUTURA = "estrutura"
+    RUIDO = "ruido"
+    VANDALISMO = "vandalismo"
+    ESTACIONAMENTO = "estacionamento"
+    ANIMAIS = "animais"
+    AGUA = "agua"
+    SINALIZACAO = "sinalizacao"
     OUTROS = "outros"
 
 class PriorityLevel(str, Enum):
     BAIXA = "baixa"
     MEDIA = "media"
     ALTA = "alta"
+    CRITICA = "critica"
 
 class TicketStatus(str, Enum):
     AGUARDANDO_INFORMACAO = "aguardando_informacao"
@@ -63,9 +77,11 @@ class IncidentDB(Base):
     department = Column(String, nullable=True)
     protocol = Column(String, unique=True, index=True, nullable=True)
     status = Column(String, default=TicketStatus.RECEBIDO.value)
+    authenticity_flag = Column(String, nullable=True)
+    extra_data = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow)
 
     messages = relationship("MessageDB", back_populates="incident")
 
@@ -80,7 +96,7 @@ class MessageDB(Base):
     sender = Column(String, nullable=False)  # citizen / agent
     content = Column(Text, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     incident = relationship("IncidentDB", back_populates="messages")
 
@@ -93,8 +109,26 @@ class StatusUpdateDB(Base):
     status = Column(String, nullable=False)
     message = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
+class StreetDB(Base):
+    __tablename__ = "streets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    name_normalized = Column(String, index=True, nullable=False)
+    freguesia = Column(String, index=True, nullable=False)
+    length_m = Column(Integer, nullable=True)
+
+
+class UserDB(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="cidadao")  # cidadao | funcionario
+    created_at = Column(DateTime, default=_utcnow)
 
 # =========================
 # Pydantic Schemas
@@ -155,7 +189,7 @@ class StatusHistoryDB(Base):
 
     message = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
 
 class CitizenUpdate(BaseModel):
@@ -172,3 +206,24 @@ class CitizenUpdatesResponse(BaseModel):
     citizen_id: str
     updates: list[CitizenUpdate]
     total: int
+
+
+class UserRole(str, Enum):
+    CIDADAO = "cidadao"
+    FUNCIONARIO = "funcionario"
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(..., json_schema_extra={"example": "joao@exemplo.pt"})
+    password: str = Field(..., json_schema_extra={"example": "senha_segura"})
+    role: UserRole = Field(default=UserRole.CIDADAO)
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, END
 from src.state import AgentState
 from src.nodes import (
     classify_incident,
+    verify_authenticity,
     check_missing_data,
     prioritize_incident,
     route_incident,
@@ -26,6 +27,11 @@ workflow = StateGraph(AgentState)
 workflow.add_node(
     "classify_incident",
     classify_incident
+)
+
+workflow.add_node(
+    "verify_authenticity",
+    verify_authenticity
 )
 
 workflow.add_node(
@@ -58,6 +64,16 @@ workflow.add_node(
     save_incident
 )
 
+def route_after_authenticity(state: AgentState) -> str:
+    if state.get("authenticity_flag") == "fake":
+        return "generate_response"
+    return "check_missing_data"
+
+def route_after_missing_data(state: AgentState) -> str:
+    if state["missing_fields"]:
+        return "create_ticket"
+    return "prioritize_incident"
+
 # =========================
 # Definir fluxo
 # =========================
@@ -66,12 +82,24 @@ workflow.set_entry_point("classify_incident")
 
 workflow.add_edge(
     "classify_incident",
-    "check_missing_data"
+    "verify_authenticity"
 )
 
-workflow.add_edge(
+workflow.add_conditional_edges(
+    "verify_authenticity",
+    route_after_authenticity,
+    {
+        "check_missing_data": "check_missing_data",
+        "generate_response": "generate_response",
+    }
+)
+workflow.add_conditional_edges(
     "check_missing_data",
-    "prioritize_incident"
+    route_after_missing_data,
+    {
+        "create_ticket": "create_ticket",
+        "prioritize_incident": "prioritize_incident",
+    }
 )
 
 workflow.add_edge(

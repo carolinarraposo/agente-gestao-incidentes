@@ -1,171 +1,140 @@
-# Agente Inteligente Autónomo para Gestão de Incidentes
+# Agente Inteligente para Gestão de Incidentes Urbanos
 
-Sistema de inteligência artificial para triagem, encaminhamento e acompanhamento automático de incidentes urbanos reportados por cidadãos ao município da Covilhã.
+API para triagem, priorização e encaminhamento automático de incidentes urbanos reportados pelos cidadãos do município da Covilhã.
 
 ## Descrição
 
-O agente recebe reclamações de cidadãos em linguagem natural, analisa o conteúdo, solicita informação em falta quando necessário, e encaminha automaticamente cada caso para o departamento municipal responsável — sem intervenção humana constante.
-
-O sistema integra dados de notícias e redes sociais locais para enriquecer a análise de prioridade de cada incidente, considerando contexto real da cidade.
-
-### Funcionalidades principais
-
-- **Triagem e qualificação** — classifica o tipo de incidente e verifica se a localização foi fornecida; se não, interage com o cidadão para a obter
-- **Encaminhamento inteligente** — direciona cada chamado para o departamento correto (Secretaria de Obras, Vigilância Sanitária, Serviços Urbanos, Saneamento, Proteção Civil)
-- **Priorização com contexto local** — analisa o risco e urgência do incidente, enriquecida com notícias e posts de redes sociais da Covilhã
-- **Feedback proativo** — permite ao cidadão consultar atualizações de estado dos seus chamados
-- **Respostas naturais** — gera respostas personalizadas e empáticas via LLM, não templates fixos
+O agente recebe mensagens em linguagem natural dos cidadãos, classifica o tipo de incidente, valida a localização, recolhe informação estruturada por categoria, define a prioridade e encaminha para o departamento municipal responsável. O diálogo é multi-turno — o agente pede esclarecimentos quando a informação é insuficiente.
 
 ## Arquitetura
 
-O agente é implementado com **LangGraph**, onde cada etapa do processamento corresponde a um nó do grafo:
+O sistema é construído com **LangGraph** (grafo de estados) sobre **FastAPI**, com persistência em **SQLite** e LLM via **Groq** (llama-3.3-70b-versatile).
+
+### Fluxo do grafo
 
 ```
-                                     Mensagem do cidadão
-                                            ↓
-                                  Classificação do incidente
-                                            ↓
-                                Verificação de dados em falta
-                                            ↓
-                                Priorização (com contexto local)
-                                            ↓
-                               Encaminhamento para departamento
-                                            ↓
-                                     Criação do chamado
-                                            ↓
-                                  Guardar na base de dados
-                                            ↓
-                                Geração de resposta ao cidadão
+classificar → verificar autenticidade → verificar dados em falta → priorizar → encaminhar → criar chamado → guardar → responder
 ```
 
-A API é construída com **FastAPI** e os dados são persistidos em **SQLite** via **SQLAlchemy**.
+- Se a mensagem for **fake**, vai diretamente para a resposta
+- Se faltarem dados (localização, descrição, campos extra), o agente pergunta e fica em `aguardando_informacao`
+- Quando completo, o incidente é priorizado com contexto local (notícias, Reddit, Bluesky) e encaminhado
 
-## Pré-requisitos
+### Estrutura do projeto
 
-- Python 3.11+
-- Chave de API Groq 
+```
+src/
+  app.py                   # FastAPI — endpoints e lifespan
+  graph.py                 # Grafo LangGraph
+  nodes.py                 # Lógica de cada nó do grafo
+  state.py                 # Definição do estado do agente
+  models.py                # Modelos SQLAlchemy e Pydantic
+  auth.py                  # Autenticação JWT
+  context_search.py        # Pesquisa de contexto local
+  location_validation.py   # Validação de ruas contra dataset oficial
+  database.py              # Configuração da BD
+  config.py                # Variáveis de ambiente
+  logger.py                # Configuração de logs
+
+data/
+  streets_covilha.csv      # Dataset oficial de ruas do município (1265 entradas)
+
+tests/
+  test_integration.py      # Testes de integração end-to-end
+  test_context_search.py   # Testes unitários do context search
+
+import_streets.py          # Importa o dataset de ruas para a BD
+import_context.py          # Importa dados de contexto (notícias, redes sociais)
+```
 
 ## Instalação
 
+### Pré-requisitos
+
+- Python 3.11+
+- Conta Groq com API key
+
+### Setup
+
 ```bash
+# Clonar o repositório
 git clone https://github.com/carolinarraposo/agente-gestao-incidentes.git
 cd agente-gestao-incidentes
 
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Linux/Mac
+# Criar ambiente virtual
+python -m venv .venv
+.venv\Scripts\activate       # Windows
+source .venv/bin/activate    # Linux/Mac
 
+# Instalar dependências
 pip install -r requirements.txt
-```
 
-## Configuração
-
-Cria um ficheiro `.env` na raiz do projeto com base no `.env.example`:
-
-```bash
+# Configurar variáveis de ambiente
 cp .env.example .env
+# Editar .env com as chaves necessárias
 ```
 
-Preenche as variáveis:
+### Variáveis de ambiente
 
-```
-GROQ_API_KEY=a_tua_chave_groq
-
-# Opcional — só necessário se os repositórios não estiverem na mesma pasta pai
-# EXTRACTION_RAW_PATH=../extracao_dados_covilha/data/raw
-```
-
-## Importação de dados de contexto
-
-O agente utiliza dados de notícias e redes sociais da Covilhã para enriquecer a priorização de incidentes. Para importar os dados pela primeira vez:
-
-```bash
-python import_context.py
+```env
+GROQ_API_KEY=...           # Chave da API Groq (obrigatório)
+JWT_SECRET_KEY=...         # Chave secreta JWT (obrigatório em produção)
+EXTRACTION_RAW_PATH=...    # Caminho para dados de extração (opcional)
 ```
 
-Este passo é opcional — o agente corre `import_context.py` automaticamente no arranque se a base de dados de contexto estiver vazia.
-
-## Execução
+## Arranque
 
 ```bash
 uvicorn src.app:app --reload
 ```
 
-A API fica disponível em `http://localhost:8000`.
+O servidor arranca em `http://localhost:8000`. Na primeira execução o dataset de ruas e os dados de contexto são importados automaticamente.
 
-A documentação interativa (Swagger UI) está disponível em `http://localhost:8000/docs`.
+A documentação interativa da API está disponível em `http://localhost:8000/docs`.
 
 ## Endpoints
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| `POST` | `/message` | Envia uma mensagem do cidadão ao agente |
-| `POST` | `/status/update` | Atualiza o estado de um chamado |
-| `GET` | `/ticket/{protocol}` | Consulta os detalhes de um chamado |
-| `GET` | `/history/{protocol}` | Consulta o histórico de mensagens e estados |
-| `GET` | `/incidents` | Lista todos os incidentes registados |
-| `GET` | `/citizen/{citizen_id}/updates` | Consulta atualizações recentes de um cidadão |
+### Autenticação
 
-## Exemplo de utilização
+| Método | Endpoint | Descrição | Acesso |
+|--------|----------|-----------|--------|
+| POST | `/auth/register` | Registar utilizador | Público |
+| POST | `/auth/login` | Login — devolve token JWT | Público |
 
-**Reportar um incidente:**
+### Incidentes
 
-```bash
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"citizen_id": "citizen_001", "message": "Há um buraco na Rua do Comércio na Covilhã"}'
-```
+| Método | Endpoint | Descrição | Acesso |
+|--------|----------|-----------|--------|
+| POST | `/message` | Enviar mensagem ao agente | Cidadão |
+| GET | `/ticket/{protocol}` | Consultar chamado | Cidadão |
+| GET | `/history/{protocol}` | Histórico de mensagens | Cidadão |
+| GET | `/citizen/{id}/updates` | Atualizações recentes | Cidadão |
+| GET | `/incidents` | Listar todos os incidentes | Funcionário |
+| POST | `/status/update` | Atualizar estado de um chamado | Funcionário |
 
-Resposta:
-```json
-{
-  "response": "A sua ocorrência foi registada com o protocolo INC-20260611145207. A Secretaria de Obras irá tratar do caso com prioridade média.",
-  "protocol": "INC-20260611145207",
-  "status": "recebido"
-}
-```
+### Roles
 
-**Consultar atualizações:**
+- **cidadao** — pode reportar incidentes e consultar os seus chamados
+- **funcionario** — pode ver todos os incidentes e atualizar estados
 
-```bash
-curl http://localhost:8000/citizen/citizen_001/updates?since_hours=24
-```
+## Categorias de incidente
+
+`buraco` · `iluminacao` · `lixo` · `dengue` · `saneamento` · `incendio` · `neve` · `arvore` · `estrutura` · `ruido` · `vandalismo` · `estacionamento` · `animais` · `agua` · `sinalizacao` · `outros`
+
+Para as categorias `estacionamento`, `animais`, `ruido`, `incendio`, `vandalismo` e `iluminacao`, o agente recolhe campos estruturados adicionais (ex: marca/modelo/cor/matrícula para estacionamento).
 
 ## Testes
 
 ```bash
-pytest tests/test_integration.py -v
+pytest tests/ -v
 ```
 
-Os testes cobrem três cenários de integração ponta-a-ponta:
-- Fluxo completo com localização fornecida desde o início
-- Fluxo multi-turno onde o agente solicita a localização
-- Atualização de estado e consulta de feedback proativo
+17 testes: 3 de integração end-to-end + 14 unitários ao módulo de pesquisa de contexto.
 
-## Estrutura do projeto
+## Dados de contexto
 
-```
-agente_gestao_incidentes/
-├── src/
-│   ├── app.py              # API FastAPI e endpoints
-│   ├── graph.py            # Definição do grafo LangGraph
-│   ├── nodes.py            # Nós do grafo (lógica do agente)
-│   ├── models.py           # Modelos SQLAlchemy e Pydantic
-│   ├── database.py         # Configuração da base de dados
-│   ├── context_search.py   # Pesquisa de contexto local
-│   ├── state.py            # Estado do agente
-│   └── logger.py           # Configuração de logging
-├── tests/
-│   └── test_integration.py # Testes de integração
-├── .github/
-│   └── workflows/
-│       └── import_context.yml  # Workflow de sincronização de dados
-├── import_context.py       # Script de importação de dados de contexto
-├── requirements.txt
-├── .env.example
-└── README.md
-```
+O agente enriquece a priorização com notícias e publicações em redes sociais locais (Covilhã). Os dados são extraídos pelo repositório `extracao-dados-covilha` e importados via `import_context.py`.
 
-## Autor
+## Dataset de ruas
 
-Carolina Raposo — Licenciatura em Inteligência Artificial e Ciência de Dados, Universidade da Beira Interior
+O ficheiro `data/streets_covilha.csv` contém 1265 entradas de ruas oficiais do município da Covilhã com os nomes de freguesia pós-2013, usado para validar e desambiguar localizações mencionadas pelos cidadãos.

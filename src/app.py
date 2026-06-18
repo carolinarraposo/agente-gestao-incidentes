@@ -1,8 +1,11 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import json
 import subprocess
+import sys
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -20,18 +23,33 @@ from src.models import (
     StatusHistoryDB,
     CitizenUpdate,
     CitizenUpdatesResponse,
+    RegisterRequest,
+    LoginRequest,
+    TokenResponse,
+    UserDB,
+)
+from src.auth import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    require_cidadao,
+    require_funcionario,
 )
 
 
 def _auto_import_context():
     try:
-        with engine.connect() as conn:
-            result = conn.execute(text(
-                "SELECT COUNT(*), MAX(imported_at) FROM context_documents"
-            ))
-            row = result.fetchone()
-            count = row[0]
-            last_import = row[1]
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(
+                    "SELECT COUNT(*), MAX(imported_at) FROM context_documents"
+                ))
+                row = result.fetchone()
+                count = row[0]
+                last_import = row[1]
+        except Exception:
+            count = 0
+            last_import = None
 
         needs_import = False
 
@@ -40,12 +58,12 @@ def _auto_import_context():
             logger.info("Contexto vazio — a importar dados de extração...")
         elif last_import:
             last = datetime.fromisoformat(str(last_import))
-            if datetime.utcnow() - last > timedelta(hours=12):
+            if datetime.now(timezone.utc).replace(tzinfo=None) - last > timedelta(hours=12):
                 needs_import = True
                 logger.info("Dados de contexto desatualizados — a reimportar...")
 
         if needs_import:
-            subprocess.run(["python", "import_context.py"], check=True)
+            subprocess.run([sys.executable, "import_context.py"], check=True)
             logger.info("Importação de contexto concluída.")
         else:
             logger.info(f"Contexto atualizado ({count} documentos). Importação não necessária.")
@@ -54,9 +72,26 @@ def _auto_import_context():
         logger.warning(f"Auto-import de contexto falhou | erro={e}")
 
 
+def _auto_import_streets():
+    try:
+        from src.models import StreetDB
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT COUNT(*) FROM streets"))
+            count = result.fetchone()[0]
+        if count == 0:
+            logger.info("Tabela de ruas vazia — a importar dataset...")
+            subprocess.run([sys.executable, "import_streets.py"], check=True)
+            logger.info("Importação de ruas concluída.")
+        else:
+            logger.info(f"Dataset de ruas já carregado ({count} entradas).")
+    except Exception as e:
+        logger.warning(f"Auto-import de ruas falhou | erro={e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
+    _auto_import_streets()
     _auto_import_context()
     yield
 
@@ -68,6 +103,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://attract.ubi.pt",
+        "http://localhost:3000",
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/")
 def root():
@@ -76,8 +124,40 @@ def root():
     }
 
 
+@app.post("/auth/register", response_model=TokenResponse, tags=["auth"])
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+    existing = db.query(UserDB).filter(UserDB.email == request.email).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email já registado.")
+    user = UserDB(
+        email=request.email,
+        hashed_password=hash_password(request.password),
+        role=request.role.value,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token({"sub": user.email, "role": user.role})
+    logger.info(f"Utilizador registado | email={user.email} | role={user.role}")
+    return TokenResponse(access_token=token)
+
+
+@app.post("/auth/login", response_model=TokenResponse, tags=["auth"])
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(UserDB).filter(UserDB.email == request.email).first()
+    if not user or not verify_password(request.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas.")
+    token = create_access_token({"sub": user.email, "role": user.role})
+    logger.info(f"Login efetuado | email={user.email}")
+    return TokenResponse(access_token=token)
+
+
 @app.post("/message", response_model=MessageResponse)
-def process_message(request: MessageRequest, db: Session = Depends(get_db)):
+def process_message(
+    request: MessageRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_cidadao),
+):
     logger.info(
         f"Pedido recebido | citizen_id={request.citizen_id} | message={request.message}"
     )
@@ -107,19 +187,27 @@ def process_message(request: MessageRequest, db: Session = Depends(get_db)):
             f"{pending_incident.description} "
             f"{request.message}"
         )
+        existing_extra = json.loads(pending_incident.extra_data) if pending_incident.extra_data else None
     else:
         combined_message = request.message
+        existing_extra = None
+
+    last_reply = request.message
 
     initial_state = {
         "citizen_id": request.citizen_id,
         "message": combined_message,
+        "last_reply": last_reply,
 
         "pending_incident_id": pending_incident.id if pending_incident else None,
 
         "incident_type": None,
         "description": combined_message,
         "location": None,
-        "location_clarification_question": None,
+        "clarification_question": None,
+
+        "authenticity_flag": None,
+        "authenticity_reason": None,
 
         "priority": None,
         "priority_justification": None,
@@ -132,6 +220,8 @@ def process_message(request: MessageRequest, db: Session = Depends(get_db)):
 
         "protocol": None,
         "status": None,
+
+        "extra_data": existing_extra,
 
         "response": None
     }
@@ -180,7 +270,11 @@ def process_message(request: MessageRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/status/update")
-def update_status(request: StatusUpdateRequest, db: Session = Depends(get_db)):
+def update_status(
+    request: StatusUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_funcionario),
+):
 
     incident = (
         db.query(IncidentDB)
@@ -235,7 +329,10 @@ def update_status(request: StatusUpdateRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/incidents")
-def get_incidents(db: Session = Depends(get_db)):
+def get_incidents(
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_funcionario),
+):
 
     incidents = db.query(IncidentDB).all()
 
@@ -259,7 +356,11 @@ def get_incidents(db: Session = Depends(get_db)):
 
 
 @app.get("/ticket/{protocol}", response_model=TicketResponse)
-def get_ticket(protocol: str, db: Session = Depends(get_db)):
+def get_ticket(
+    protocol: str,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_cidadao),
+):
 
     incident = (
         db.query(IncidentDB)
@@ -286,7 +387,11 @@ def get_ticket(protocol: str, db: Session = Depends(get_db)):
 
 
 @app.get("/history/{protocol}")
-def get_history(protocol: str, db: Session = Depends(get_db)):
+def get_history(
+    protocol: str,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_cidadao),
+):
 
     incident = (
         db.query(IncidentDB)
@@ -343,9 +448,10 @@ def get_history(protocol: str, db: Session = Depends(get_db)):
 def get_citizen_updates(
     citizen_id: str,
     since_hours: int = 24,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_cidadao),
 ):
-    since = datetime.utcnow() - timedelta(hours=since_hours)
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=since_hours)
 
     incidents = (
         db.query(IncidentDB)

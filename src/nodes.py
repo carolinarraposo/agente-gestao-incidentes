@@ -1,7 +1,6 @@
 from datetime import datetime
 import json
 
-#from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 
 #from src.config import GOOGLE_API_KEY, MODEL_NAME
@@ -12,13 +11,47 @@ from src.models import IncidentDB
 from src.state import AgentState
 from src.logger import logger
 from src.context_search import get_relevant_context
+from src.location_validation import validate_location
 
 
-#llm = ChatGoogleGenerativeAI(
-#    model=MODEL_NAME,
-#    google_api_key=GOOGLE_API_KEY,
-#    temperature=0
-#)
+PRIORITY_ORDER = ["baixa", "media", "alta", "critica"]
+
+MIN_PRIORITY = {
+    "incendio": "critica",
+    "estrutura": "critica",
+    "arvore": "alta",
+    "neve": "alta",
+    "dengue": "media",
+}
+
+REQUIRED_EXTRA_FIELDS = {
+    "estacionamento": {
+        "marca":     "Qual é a marca do veículo? (ex: Renault, Volkswagen)",
+        "modelo":    "Qual é o modelo do veículo? (ex: Clio, Golf)",
+        "cor":       "Qual é a cor do veículo?",
+        "matricula": "Qual é a matrícula do veículo?"
+    },
+    "animais": {
+        "especie":  "Qual é a espécie do animal? (ex: cão, gato, pombo)",
+        "condicao": "Qual é a condição do animal? (ex: ferido, abandonado, agressivo)"
+    },
+    "ruido": {
+        "tipo_ruido":    "Qual é o tipo de ruído? (obras, música, vizinhos, estabelecimento)",
+        "horario_ruido": "Em que horário ocorre o ruído? (diurno, noturno, fim_de_semana, permanente)"
+    },
+    "incendio": {
+        "pessoas_em_risco": "Há pessoas em risco? (sim, nao, desconhecido)",
+        "incendio_ativo":   "O incêndio ainda está ativo? (sim, nao)"
+    },
+    "vandalismo": {
+        "tipo_vandalismo": "Qual é o tipo de vandalismo? (graffiti, danos_materiais, destruicao)"
+    },
+    "iluminacao": {
+        "num_candeeiros": "Quantos candeeiros estão afetados? (ex: 1, 3, vários)",
+        "zona_risco":     "É uma zona de risco? (passagem_peoes, escola, hospital, nao)"
+    }
+}
+
 
 llm = ChatGroq(
     model=MODEL_NAME,
@@ -45,6 +78,16 @@ def classify_incident(state: AgentState):
     - lixo
     - dengue
     - saneamento
+    - incendio
+    - neve
+    - arvore
+    - estrutura
+    - ruido
+    - vandalismo
+    - estacionamento
+    - animais
+    - agua
+    - sinalizacao
     - outros
 
     Responde apenas com o nome da categoria.
@@ -60,73 +103,111 @@ def classify_incident(state: AgentState):
         "description": state["message"]
     }
 
-
 # =========================
-# 2. Verificar dados em falta
+# 2. Verificar autenticidade
 # =========================
 
-def check_missing_data(state: AgentState):
+def verify_authenticity(state: AgentState):
     prompt = f"""
-    Analisa a seguinte reclamação e identifica se existe uma localização.
+    Analisa a seguinte mensagem enviada para o sistema de gestão de
+    incidentes urbanos da Câmara Municipal da Covilhã.
 
-    Reclamação:
+    Mensagem:
     {state["message"]}
 
-    Deves distinguir entre:
-    1. Sem localização;
-    2. Localização vaga;
-    3. Localização suficientemente específica.
-
-    Uma localização é vaga quando usa expressões como:
-    - "perto da escola"
-    - "junto ao mercado"
-    - "ao pé da biblioteca"
-    - "na rua principal"
-    sem indicar nome específico, rua, bairro, número ou referência única.
-
-    Uma localização é suficientemente específica quando inclui:
-    - nome de rua;
-    - nome da escola, hospital, biblioteca ou edifício;
-    - bairro;
-    - número;
-    - coordenadas;
-    - ponto de referência claramente identificável.
+    Determina se a mensagem é:
+    - "ok": relato genuíno e plausível de um problema urbano real.
+    - "suspicious": conteúdo duvidoso que pode ser real mas levanta
+      dúvidas (ex: muito vago, tom estranho, informação contraditória).
+    - "fake": claramente não é um relato real (ex: teste, spam,
+      conteúdo sem sentido, mensagem ofensiva, cenário impossível ou
+      fictício, mensagem como "teste", "abc", "123", "olá").
 
     Responde APENAS em JSON válido:
 
     {{
+      "flag": "ok",
+      "reason": "Relato plausível de problema urbano."
+    }}
+    """
+
+    response = llm.invoke(prompt)
+    content = response.content.strip().replace("```json", "").replace("```", "").strip()
+
+    try:
+        data = json.loads(content)
+        flag = data.get("flag", "ok")
+        reason = data.get("reason", "")
+        if flag not in ("ok", "suspicious", "fake"):
+            flag = "ok"
+    except Exception as e:
+        logger.error(f"Erro parsing autenticidade | erro={e}")
+        flag = "ok"
+        reason = "Fallback por erro de parsing."
+
+    logger.info(f"Autenticidade verificada | flag={flag} | reason={reason}")
+
+    return {
+        **state,
+        "authenticity_flag": flag,
+        "authenticity_reason": reason
+    }
+
+# =========================
+# 3. Verificar dados em falta
+# =========================
+
+def check_missing_data(state: AgentState):
+    prompt = f"""
+    Analisa a seguinte reclamação e identifica:
+    1. Se existe uma localização suficientemente específica;
+    2. Se a descrição do problema é suficientemente clara.
+
+    Reclamação:
+    {state["message"]}
+
+    LOCALIZAÇÃO
+    Distingue entre:
+    - Sem localização;
+    - Localização vaga (ex: "perto da escola", "junto ao mercado",
+      "ao pé da biblioteca", "na rua principal" — sem nome específico,
+      rua, bairro, número ou referência única);
+    - Localização suficientemente específica (inclui nome de rua,
+      escola/hospital/edifício, bairro, número, coordenadas ou
+      ponto de referência claramente identificável).
+    Trata "localização vaga" e "localização incompleta" da mesma forma:
+    "is_specific": false e "needs_clarification_location": true.
+
+    DESCRIÇÃO
+    Considera a descrição insuficiente se não for possível entender
+    minimamente o que está a acontecer (ex: "há um problema",
+    "está tudo mal", sem indicar o que se passa).
+
+    Responde APENAS em JSON válido, seguindo este formato:
+
+    {{
       "has_location": true,
-      "location": "localização extraída",
+      "location": "localização extraída ou null",
       "is_specific": true,
-      "needs_clarification": false,
-      "clarification_question": null
+      "needs_clarification_location": false,
+      "location_clarification_question": null,
+      "has_sufficient_description": true,
+      "description_clarification_question": null
     }}
 
-    Se a localização for vaga:
+    Exemplos de valores para "location_clarification_question":
+    - "Pode indicar a localização da ocorrência?" (sem localização)
+    - "Pode indicar o nome da escola, rua ou outro ponto de referência mais específico?" (localização vaga)
+    - "Pode indicar o número de porta (ou um ponto de referência) e a freguesia, para localizarmos com precisão?" (rua/avenida sem número ou freguesia)
 
-    {{
-      "has_location": true,
-      "location": "perto da escola",
-      "is_specific": false,
-      "needs_clarification": true,
-      "clarification_question": "Pode indicar o nome da escola, rua ou outro ponto de referência mais específico?"
-    }}
-
-    Se não existir localização:
-
-    {{
-      "has_location": false,
-      "location": null,
-      "is_specific": false,
-      "needs_clarification": true,
-      "clarification_question": "Pode indicar a localização da ocorrência?"
-    }}
+    Exemplo de valor para "description_clarification_question":
+    - "Pode descrever com mais detalhe o que está a acontecer?"
     """
 
     response = llm.invoke(prompt)
     content = response.content.strip()
 
-    logger.info(f"Resposta LLM localização | raw={content}")
+    logger.info(f"Resposta LLM verificação de dados | raw={content}")
 
     content = content.replace("```json", "")
     content = content.replace("```", "")
@@ -134,7 +215,8 @@ def check_missing_data(state: AgentState):
 
     missing_fields = []
     location = None
-    location_clarification_question = None
+    clarification_question = None
+    extra_data = state.get("extra_data") or {}
 
     try:
         data = json.loads(content)
@@ -142,46 +224,102 @@ def check_missing_data(state: AgentState):
         has_location = data.get("has_location", False)
         location = data.get("location")
         is_specific = data.get("is_specific", False)
-        needs_clarification = data.get("needs_clarification", True)
+        needs_clarification_location = data.get("needs_clarification_location", True)
         location_clarification_question = data.get(
-            "clarification_question",
-            "Pode indicar uma localização mais específica?"
+            "location_clarification_question",
+            "Pode indicar a localização da ocorrência?"
+        )
+
+        has_sufficient_description = data.get("has_sufficient_description", True)
+        description_clarification_question = data.get(
+            "description_clarification_question",
+            "Pode descrever com mais detalhe o que está a acontecer?"
         )
 
         if not has_location:
             missing_fields.append("location")
+            clarification_question = location_clarification_question
 
-        elif needs_clarification or not is_specific:
+        elif needs_clarification_location or not is_specific:
             missing_fields.append("location_clarification")
+            clarification_question = location_clarification_question
+
+        elif not has_sufficient_description:
+            missing_fields.append("description_clarification")
+            clarification_question = description_clarification_question
+
+        else:
+            # Fase 2b: validação determinística da rua contra o dataset
+            db_status, db_question = validate_location(location or "")
+            if db_status == "ambiguous":
+                missing_fields.append("location_ambiguous")
+                clarification_question = db_question
+
+        if not missing_fields:
+            # Fase 3: campos estruturados por categoria
+            incident_type = state.get("incident_type")
+            required_extras = REQUIRED_EXTRA_FIELDS.get(incident_type, {})
+            if required_extras:
+                needed = {k: v for k, v in required_extras.items() if not extra_data.get(k)}
+                if needed:
+                    fields_str = "\n".join(f'- "{k}": {desc}' for k, desc in needed.items())
+                    last_reply = state.get("last_reply") or state["message"]
+                    extra_prompt = f"""O cidadão está a responder a perguntas sobre um incidente urbano.
+
+Contexto completo: {state["message"]}
+Última resposta do cidadão: {last_reply}
+
+Campos ainda em falta:
+{fields_str}
+
+Extrai os valores dos campos em falta com base na última resposta do cidadão.
+- Se a última resposta contiver um valor claro para um campo, usa esse valor.
+- Se o cidadão disser explicitamente que não sabe (ex: "não sei", "desconheço", "não tenho"), usa "desconhecido".
+- Se a última resposta não mencionar o campo, usa null.
+Responde APENAS em JSON. Exemplo: {{"campo1": "valor", "campo2": "desconhecido", "campo3": null}}"""
+                    try:
+                        extra_response = llm.invoke(extra_prompt)
+                        extra_content = extra_response.content.strip().replace("```json", "").replace("```", "").strip()
+                        extracted = json.loads(extra_content)
+                        for k in needed:
+                            val = extracted.get(k)
+                            if val and str(val).lower() not in ("null", "none", ""):
+                                extra_data[k] = str(val)
+                    except Exception as e:
+                        logger.error(f"Erro a extrair campos extra | erro={e}")
+
+                    still_missing = {k: v for k, v in needed.items() if not extra_data.get(k)}
+                    if still_missing:
+                        first_key, first_desc = next(iter(still_missing.items()))
+                        missing_fields.append(f"extra_{first_key}")
+                        clarification_question = first_desc
 
     except Exception as e:
-        logger.error(f"Erro parsing localização | erro={e}")
+        logger.error(f"Erro parsing verificação de dados | erro={e}")
         missing_fields.append("location")
-        location_clarification_question = "Pode indicar a localização da ocorrência?"
+        clarification_question = "Pode indicar a localização da ocorrência?"
 
     logger.info(
-        f"Verificação de dados | location={location} | missing_fields={missing_fields}"
+        f"Verificação de dados | location={location} | missing_fields={missing_fields} | extra_data={extra_data}"
     )
 
     return {
         **state,
         "location": location,
         "missing_fields": missing_fields,
-        "location_clarification_question": location_clarification_question
+        "clarification_question": clarification_question,
+        "extra_data": extra_data,
     }
 
 
 # =========================
-# 3. Priorização
+# 4. Priorização
 # =========================
 
 def prioritize_incident(state):
     """
     Versão enriquecida com contexto da base de dados de extração.
     """
-    from src.context_search import get_relevant_context
-    import json
-
     context = get_relevant_context(
         state.get("incident_type"),
         state.get("description"),
@@ -198,6 +336,15 @@ Usa este contexto para ajustar a prioridade se houver padrões recorrentes,
 problemas conhecidos na zona, ou cobertura mediática relevante.
 """
 
+    extra_data = state.get("extra_data") or {}
+    extra_block = ""
+    if extra_data:
+        extra_lines = "\n".join(f"- {k}: {v}" for k, v in extra_data.items())
+        extra_block = f"""
+Informações adicionais recolhidas:
+{extra_lines}
+"""
+
     prompt = f"""
 Analisa o seguinte incidente urbano.
 
@@ -209,7 +356,7 @@ Descrição:
 
 Localização:
 {state["location"]}
-{context_block}
+{extra_block}{context_block}
 Avalia:
 - risco para pessoas;
 - risco para saúde pública;
@@ -236,25 +383,51 @@ Exemplo:
     response = llm.invoke(prompt)
     content = response.content.strip()
 
-    from src.logger import logger
     logger.info(f"Resposta LLM prioridade | raw={content}")
 
     content = content.replace("```json", "").replace("```", "").strip()
 
+    incident_type = state.get("incident_type")
+    fallback_priority = MIN_PRIORITY.get(incident_type, "media")
+
     try:
         data = json.loads(content)
-        priority = data.get("priority", "media")
+        priority = data.get("priority", fallback_priority)
         justification = data.get("justification", "Sem justificação.")
         risk_analysis = data.get("risk_analysis", "Sem análise.")
         if not isinstance(risk_analysis, str):
             risk_analysis = json.dumps(risk_analysis, ensure_ascii=False)
+
+        if priority not in PRIORITY_ORDER:
+            logger.error(f"Prioridade inválida do LLM | valor={priority}")
+            priority = fallback_priority
     except Exception as e:
         logger.error(f"Erro parsing prioridade | erro={e}")
-        priority = "media"
+        priority = fallback_priority
         justification = "Fallback por erro de parsing."
         risk_analysis = "Não foi possível analisar risco."
 
     logger.info(f"Priorização concluída | prioridade={priority} | contexto_usado={bool(context)}")
+
+    min_priority = MIN_PRIORITY.get(incident_type)
+    if min_priority and PRIORITY_ORDER.index(priority) < PRIORITY_ORDER.index(min_priority):
+        logger.info(
+            f"Prioridade ajustada por regra de segurança | tipo={incident_type} | "
+            f"original={priority} | ajustada={min_priority}"
+        )
+        priority = min_priority
+        justification += (
+            f" (prioridade ajustada para o mínimo de segurança definido "
+            f"para incidentes do tipo '{incident_type}'.)"
+        )
+
+    # Regra extra: incêndio com pessoas em risco → sempre crítica
+    extra_data = state.get("extra_data") or {}
+    if incident_type == "incendio" and extra_data.get("pessoas_em_risco") == "sim":
+        if priority != "critica":
+            logger.info("Prioridade forçada a critica: incendio com pessoas em risco")
+            priority = "critica"
+            justification += " (forçado a crítico: incêndio com pessoas em risco confirmadas.)"
 
     return {
         **state,
@@ -263,9 +436,8 @@ Exemplo:
         "risk_analysis": risk_analysis
     }
 
-
 # =========================
-# 4. Encaminhamento
+# 5. Encaminhamento
 # =========================
 
 def route_incident(state: AgentState):
@@ -286,11 +458,13 @@ def route_incident(state: AgentState):
     {state["priority"]}
 
     Serviços possíveis:
-    - Secretaria de Obras: buracos, estradas, passeios, iluminação pública, sinalização, manutenção urbana.
+    - Secretaria de Obras: buracos, estradas, passeios, iluminação pública, sinalização, manutenção urbana, árvores ou estruturas sem risco imediato.
     - Vigilância Sanitária: dengue, focos de mosquitos, saúde pública, pragas, riscos sanitários.
     - Serviços Urbanos: lixo, resíduos, limpeza urbana, contentores, recolha.
-    - Serviços de Saneamento: esgotos, águas residuais, drenagem, ruturas de água.
-    - Proteção Civil: risco imediato à vida, incêndios, desabamentos, cheias, fios elétricos expostos.
+    - Serviços de Saneamento: esgotos, águas residuais, drenagem, ruturas de água, falta de água.
+    - Proteção Civil: risco imediato à vida, incêndios, desabamentos, neve e estradas bloqueadas, queda de árvores ou estruturas com risco iminente, cheias, fios elétricos expostos.
+    - Fiscalização Municipal: ruído excessivo, vandalismo/graffiti, veículos mal estacionados ou abandonados.
+    - Proteção Animal: animais abandonados, feridos ou em sofrimento.
     - Atendimento Geral: casos pouco claros ou que não se enquadram nos anteriores.
 
     Responde APENAS em JSON válido:
@@ -338,7 +512,7 @@ def route_incident(state: AgentState):
 
 
 # =========================
-# 5. Criar chamado
+# 6. Criar chamado
 # =========================
 
 def create_ticket(state: AgentState):
@@ -365,7 +539,7 @@ def create_ticket(state: AgentState):
 
 
 # =========================
-# 6. Guardar incidente
+# 7. Guardar incidente
 # =========================
 
 def save_incident(state: AgentState):
@@ -397,6 +571,8 @@ def save_incident(state: AgentState):
                 incident.department = state["department"]
                 incident.protocol = state["protocol"]
                 incident.status = status
+                incident.authenticity_flag = state.get("authenticity_flag")
+                incident.extra_data = json.dumps(state.get("extra_data") or {}, ensure_ascii=False) if state.get("extra_data") else None
 
                 db.commit()
                 logger.info(
@@ -414,7 +590,9 @@ def save_incident(state: AgentState):
             risk_analysis=state["risk_analysis"],
             department=state["department"],
             protocol=state["protocol"],
-            status=status
+            status=status,
+            authenticity_flag=state.get("authenticity_flag"),
+            extra_data=json.dumps(state.get("extra_data") or {}, ensure_ascii=False) if state.get("extra_data") else None
         )
 
         db.add(incident)
@@ -430,22 +608,21 @@ def save_incident(state: AgentState):
 
 
 # =========================
-# 7. Gerar resposta
+# 8. Gerar resposta
 # =========================
 
 def generate_response(state: AgentState):
-    if state["missing_fields"]:
-
-        if "location_clarification" in state["missing_fields"]:
-            response = state.get(
-                "location_clarification_question",
-                "Pode indicar uma localização mais específica?"
-            )
-        else:
-            response = (
-                "Preciso de mais informações para processar "
-                "a ocorrência. Pode indicar a localização?"
-            )
+    if state.get("authenticity_flag") == "fake":
+        response = (
+            "A sua mensagem não foi reconhecida como uma ocorrência urbana válida "
+            "e não foi registada. Se tiver um problema real para reportar, "
+            "por favor descreva-o com mais detalhe."
+        )
+    elif state["missing_fields"]:
+        response = state.get(
+            "clarification_question",
+            "Preciso de mais informações para processar a ocorrência."
+        )
 
     else:
         prompt = f"""

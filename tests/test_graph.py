@@ -8,7 +8,7 @@ initial_state = {
     "incident_type": None,
     "description": None,
     "location": None,
-    "location_clarification_question": None,
+    "clarification_question": None,
 
     "priority": None,
     "priority_justification": None,
@@ -22,9 +22,14 @@ initial_state = {
     "protocol": None,
     "status": None,
 
-    "response": None
+    "response": None,
 
     "pending_incident_id": None,
+
+    "authenticity_flag": None,
+    "authenticity_reason": None,
+
+    "extra_data": None,
 }
 
 
