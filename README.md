@@ -1,3 +1,5 @@
+<img alt="UBI Logo" height="150" src="informatica-ubi.jpg" width="150"/>
+
 # Agente Inteligente para Gestão de Incidentes Urbanos
 
 API para triagem, priorização e encaminhamento automático de incidentes urbanos reportados pelos cidadãos do município da Covilhã.
