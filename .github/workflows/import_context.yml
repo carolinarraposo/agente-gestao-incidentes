@@ -43,4 +43,4 @@ jobs:
       - name: Run context import (dry-run validation)
         env:
           EXTRACTION_RAW_PATH: ${{ github.workspace }}/extracao_dados_covilha/data/raw
-        run: echo "s" | python import_context.py
+        run: python import_context.py --force

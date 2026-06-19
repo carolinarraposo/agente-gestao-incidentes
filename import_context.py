@@ -163,7 +163,7 @@ def import_bluesky(session, raw_path: Path) -> int:
     return count
 
 
-def main():
+def main(force: bool = False):
     engine = create_engine(
         DATABASE_URL,
         connect_args={"check_same_thread": False}
@@ -175,12 +175,13 @@ def main():
 
     existing = session.query(ContextDocumentDB).count()
     if existing > 0:
-        print(f"[INFO] Já existem {existing} documentos importados.")
-        resp = input("Reimportar tudo? (s/N): ").strip().lower()
-        if resp != "s":
-            print("Importação cancelada.")
-            session.close()
-            return
+        if not force:
+            print(f"[INFO] Já existem {existing} documentos importados.")
+            resp = input("Reimportar tudo? (s/N): ").strip().lower()
+            if resp != "s":
+                print("Importação cancelada.")
+                session.close()
+                return
         session.query(ContextDocumentDB).delete()
         session.commit()
         print("[INFO] Documentos anteriores removidos.")
@@ -204,4 +205,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true", help="Reimporta sem pedir confirmação")
+    args = parser.parse_args()
+    main(force=args.force)
