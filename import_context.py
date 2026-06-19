@@ -124,7 +124,7 @@ def import_news(session, raw_path: Path) -> int:
                 title=title[:500] if title else None,
                 content=text,
                 url=(item.get("url") or "").strip() or None,
-                published_at=(item.get("created_at") or "").strip() or None,
+                published_at=str(item.get("created_at") or "").strip() or None,
             )
             session.add(doc)
             count += 1
