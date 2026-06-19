@@ -2,8 +2,6 @@ from datetime import datetime
 import json
 
 from langchain_groq import ChatGroq
-
-#from src.config import GOOGLE_API_KEY, MODEL_NAME
 from src.config import GROQ_API_KEY, MODEL_NAME
 
 from src.database import SessionLocal

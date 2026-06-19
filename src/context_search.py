@@ -1,13 +1,3 @@
-"""
-context_search.py
------------------
-Pesquisa contexto relevante na tabela context_documents da base de dados
-do agente para enriquecer a priorização de incidentes.
-
-Os dados são importados previamente via import_context.py.
-Coloca este ficheiro em: agente_gestao_incidentes/src/context_search.py
-"""
-
 import re
 from pathlib import Path
 from typing import Optional

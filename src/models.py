@@ -130,6 +130,21 @@ class UserDB(Base):
     role = Column(String, nullable=False, default="cidadao")  # cidadao | funcionario
     created_at = Column(DateTime, default=_utcnow)
 
+
+class StatusHistoryDB(Base):
+    __tablename__ = "status_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=False)
+
+    old_status = Column(String, nullable=True)
+    new_status = Column(String, nullable=False)
+
+    message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=_utcnow)
+
 # =========================
 # Pydantic Schemas
 # =========================
@@ -143,20 +158,6 @@ class MessageResponse(BaseModel):
     response: str
     protocol: Optional[str] = None
     status: Optional[str] = None
-
-
-class IncidentData(BaseModel):
-    citizen_id: str
-    incident_type: Optional[IncidentType] = None
-    description: str
-    location: Optional[str] = None
-    priority: Optional[PriorityLevel] = None
-    priority_justification: Optional[str] = None
-    department: Optional[str] = None
-    missing_fields: List[str] = []
-    protocol: Optional[str] = None
-    status: Optional[TicketStatus] = None
-
 
 class TicketResponse(BaseModel):
     protocol: str
@@ -176,21 +177,6 @@ class StatusUpdateRequest(BaseModel):
         default=None,
         json_schema_extra={"example": "A equipa técnica já foi encaminhada para o local."}
     )
-
-class StatusHistoryDB(Base):
-    __tablename__ = "status_history"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=False)
-
-    old_status = Column(String, nullable=True)
-    new_status = Column(String, nullable=False)
-
-    message = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=_utcnow)
-
 
 class CitizenUpdate(BaseModel):
     protocol: str
