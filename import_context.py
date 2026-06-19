@@ -4,34 +4,37 @@ import_context.py
 Importa os dados de extração (notícias e redes sociais da Covilhã)
 para a base de dados do agente, numa tabela independente.
 
-Depois desta importação, o agente não depende do repositório de extração
-— funciona em qualquer máquina com apenas o seu próprio repositório.
+Em produção lê os ficheiros do Cloudflare R2.
+Em desenvolvimento lê do caminho local definido em EXTRACTION_RAW_PATH.
 
 Uso:
     python import_context.py
-
-Corre uma vez antes de arrancar o servidor, ou sempre que os dados
-de extração forem atualizados.
-
-Coloca este ficheiro na raiz do agente_gestao_incidentes/
+    python import_context.py --force
 """
 
 import csv
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, create_engine
-)
+from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_URL = f"sqlite:///{BASE_DIR / 'incidents.db'}"
 
 Base = declarative_base()
+
+R2_FILES = [
+    "data/raw/news_posts.json",
+    "data/raw/reddit_posts_clean.json",
+    "data/raw/bluesky_posts.json",
+    "data/raw/youtube_posts.json",
+    "data/raw/facebook_test.json",
+]
 
 
 class ContextDocumentDB(Base):
@@ -46,11 +49,45 @@ class ContextDocumentDB(Base):
     imported_at = Column(DateTime, default=datetime.utcnow)
 
 
+def download_from_r2() -> Path:
+    """Descarrega os ficheiros do R2 para uma pasta temporária e devolve o caminho."""
+    try:
+        import boto3
+    except ImportError:
+        print("[ERRO] boto3 não instalado. Corre: pip install boto3")
+        sys.exit(1)
+
+    endpoint = os.getenv("R2_ENDPOINT_URL")
+    access_key = os.getenv("R2_ACCESS_KEY_ID")
+    secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
+    bucket = os.getenv("R2_BUCKET_NAME")
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name="auto",
+    )
+
+    tmp_dir = Path(tempfile.mkdtemp())
+    raw_dir = tmp_dir / "data" / "raw"
+    raw_dir.mkdir(parents=True)
+
+    for file_path in R2_FILES:
+        dest = tmp_dir / file_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            client.download_file(bucket, file_path, str(dest))
+            print(f"[R2] Download OK: {file_path}")
+        except Exception as e:
+            print(f"[R2] AVISO: {file_path} não encontrado no R2 — {e}")
+
+    return raw_dir
+
+
 def get_raw_path() -> Path:
-    """
-    Localiza a pasta data/raw da extração.
-    Tenta primeiro a variável de ambiente, depois o caminho relativo padrão.
-    """
+    """Devolve o caminho local para os ficheiros de extração."""
     env_path = os.getenv("EXTRACTION_RAW_PATH")
     if env_path:
         p = Path(env_path)
@@ -68,29 +105,47 @@ def get_raw_path() -> Path:
 
 
 def import_news(session, raw_path: Path) -> int:
-    filepath = raw_path / "news_posts.csv"
-    if not filepath.exists():
-        print(f"[AVISO] {filepath.name} não encontrado, a saltar.")
-        return 0
+    # Tenta JSON primeiro (R2), depois CSV (local)
+    json_path = raw_path / "news_posts.json"
+    csv_path = raw_path / "news_posts.csv"
 
     count = 0
-    with open(filepath, encoding="utf-8", errors="ignore") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            text = (row.get("text") or "").strip()
-            title = (row.get("title") or "").strip()
+
+    if json_path.exists():
+        with open(json_path, encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+        for item in data if isinstance(data, list) else []:
+            text = (item.get("text") or "").strip()
+            title = (item.get("title") or "").strip()
             if not text:
                 continue
-
             doc = ContextDocumentDB(
                 source="news",
                 title=title[:500] if title else None,
                 content=text,
-                url=(row.get("url") or "").strip() or None,
-                published_at=(row.get("created_at") or "").strip() or None,
+                url=(item.get("url") or "").strip() or None,
+                published_at=(item.get("created_at") or "").strip() or None,
             )
             session.add(doc)
             count += 1
+    elif csv_path.exists():
+        with open(csv_path, encoding="utf-8", errors="ignore") as f:
+            for row in csv.DictReader(f):
+                text = (row.get("text") or "").strip()
+                title = (row.get("title") or "").strip()
+                if not text:
+                    continue
+                doc = ContextDocumentDB(
+                    source="news",
+                    title=title[:500] if title else None,
+                    content=text,
+                    url=(row.get("url") or "").strip() or None,
+                    published_at=(row.get("created_at") or "").strip() or None,
+                )
+                session.add(doc)
+                count += 1
+    else:
+        print("[AVISO] news_posts não encontrado, a saltar.")
 
     session.commit()
     return count
@@ -116,17 +171,13 @@ def import_reddit(session, raw_path: Path) -> int:
         title = (item.get("title") or item.get("Título") or "").strip()
         if not text and not title:
             continue
-
         content = f"{title}\n{text}".strip() if title else text
-
         doc = ContextDocumentDB(
             source="reddit",
             title=title[:500] if title else None,
             content=content,
             url=(item.get("url") or item.get("URL") or "").strip() or None,
-            published_at=(
-                item.get("created_at") or item.get("Data") or ""
-            ).strip() or None,
+            published_at=(item.get("created_at") or item.get("Data") or "").strip() or None,
         )
         session.add(doc)
         count += 1
@@ -136,39 +187,52 @@ def import_reddit(session, raw_path: Path) -> int:
 
 
 def import_bluesky(session, raw_path: Path) -> int:
-    filepath = raw_path / "bluesky_posts.csv"
-    if not filepath.exists():
-        print(f"[AVISO] {filepath.name} não encontrado, a saltar.")
-        return 0
+    # Tenta JSON primeiro (R2), depois CSV (local)
+    json_path = raw_path / "bluesky_posts.json"
+    csv_path = raw_path / "bluesky_posts.csv"
 
     count = 0
-    with open(filepath, encoding="utf-8", errors="ignore") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            text = (row.get("Texto") or row.get("text") or "").strip()
+
+    if json_path.exists():
+        with open(json_path, encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+        for item in data if isinstance(data, list) else []:
+            text = (item.get("text") or item.get("Texto") or "").strip()
             if not text:
                 continue
-
             doc = ContextDocumentDB(
                 source="bluesky",
                 title=None,
                 content=text,
                 url=None,
-                published_at=(row.get("Data") or row.get("created_at") or "").strip() or None,
+                published_at=(item.get("created_at") or item.get("Data") or "").strip() or None,
             )
             session.add(doc)
             count += 1
+    elif csv_path.exists():
+        with open(csv_path, encoding="utf-8", errors="ignore") as f:
+            for row in csv.DictReader(f):
+                text = (row.get("Texto") or row.get("text") or "").strip()
+                if not text:
+                    continue
+                doc = ContextDocumentDB(
+                    source="bluesky",
+                    title=None,
+                    content=text,
+                    url=None,
+                    published_at=(row.get("Data") or row.get("created_at") or "").strip() or None,
+                )
+                session.add(doc)
+                count += 1
+    else:
+        print("[AVISO] bluesky_posts não encontrado, a saltar.")
 
     session.commit()
     return count
 
 
 def main(force: bool = False):
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={"check_same_thread": False}
-    )
-
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -186,7 +250,13 @@ def main(force: bool = False):
         session.commit()
         print("[INFO] Documentos anteriores removidos.")
 
-    raw_path = get_raw_path()
+    # Usa R2 se as credenciais estiverem definidas, caso contrário usa caminho local
+    if os.getenv("R2_ENDPOINT_URL") and os.getenv("R2_ACCESS_KEY_ID"):
+        print("[INFO] A descarregar dados do Cloudflare R2...")
+        raw_path = download_from_r2()
+    else:
+        raw_path = get_raw_path()
+
     print(f"[INFO] A ler dados de: {raw_path}")
 
     n_news = import_news(session, raw_path)

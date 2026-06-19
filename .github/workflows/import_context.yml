@@ -16,31 +16,18 @@ jobs:
       - name: Checkout agent repository
         uses: actions/checkout@v4
 
-      - name: Checkout extraction repository
-        uses: actions/checkout@v4
-        with:
-          repository: carolinarraposo/extracao-dados-covilha
-          token: ${{ secrets.AGENT_REPO_TOKEN }}
-          path: extracao_dados_covilha
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt boto3
 
-      - name: Validate extraction data exists
-        run: |
-          if [ ! -d "extracao_dados_covilha/data/raw" ]; then
-            echo "Pasta data/raw não encontrada"
-            exit 1
-          fi
-          echo "Dados encontrados — pronto para importar"
-          ls extracao_dados_covilha/data/raw/
-
-      - name: Run context import (dry-run validation)
+      - name: Run context import
         env:
-          EXTRACTION_RAW_PATH: ${{ github.workspace }}/extracao_dados_covilha/data/raw
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
         run: python import_context.py --force
