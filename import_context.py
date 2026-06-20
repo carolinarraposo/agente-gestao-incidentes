@@ -54,7 +54,7 @@ Base = declarative_base()
 
 R2_FILES = [
     "data/raw/news_posts.json",
-    "data/raw/reddit_posts_clean.json",
+    "data/raw/reddit_posts.json",
     "data/raw/bluesky_posts.json",
     "data/raw/youtube_posts.json",
     "data/raw/facebook_test.json",
@@ -194,7 +194,7 @@ def import_news(session, raw_path: Path) -> int:
 
 
 def import_reddit(session, raw_path: Path) -> int:
-    filepath = raw_path / "reddit_posts_clean.json"
+    filepath = raw_path / "reddit_posts.json"
     if not filepath.exists():
         print(f"[AVISO] {filepath.name} não encontrado, a saltar.")
         return 0
