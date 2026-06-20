@@ -20,7 +20,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine
+from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine, and_
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -47,6 +47,18 @@ class ContextDocumentDB(Base):
     url = Column(String, nullable=True)
     published_at = Column(String, nullable=True)
     imported_at = Column(DateTime, default=datetime.utcnow)
+
+
+def _already_exists(session, source: str, url: str = None, content: str = None) -> bool:
+    if url:
+        return session.query(ContextDocumentDB).filter(
+            and_(ContextDocumentDB.source == source, ContextDocumentDB.url == url)
+        ).first() is not None
+    if content:
+        return session.query(ContextDocumentDB).filter(
+            and_(ContextDocumentDB.source == source, ContextDocumentDB.content == content)
+        ).first() is not None
+    return False
 
 
 def download_from_r2() -> Path:
@@ -117,13 +129,16 @@ def import_news(session, raw_path: Path) -> int:
         for item in data if isinstance(data, list) else []:
             text = (item.get("text") or "").strip()
             title = (item.get("title") or "").strip()
+            url = (item.get("url") or "").strip() or None
             if not text:
+                continue
+            if _already_exists(session, "news", url=url, content=text):
                 continue
             doc = ContextDocumentDB(
                 source="news",
                 title=title[:500] if title else None,
                 content=text,
-                url=(item.get("url") or "").strip() or None,
+                url=url,
                 published_at=str(item.get("created_at") or "").strip() or None,
             )
             session.add(doc)
@@ -133,13 +148,16 @@ def import_news(session, raw_path: Path) -> int:
             for row in csv.DictReader(f):
                 text = (row.get("text") or "").strip()
                 title = (row.get("title") or "").strip()
+                url = (row.get("url") or "").strip() or None
                 if not text:
+                    continue
+                if _already_exists(session, "news", url=url, content=text):
                     continue
                 doc = ContextDocumentDB(
                     source="news",
                     title=title[:500] if title else None,
                     content=text,
-                    url=(row.get("url") or "").strip() or None,
+                    url=url,
                     published_at=(row.get("created_at") or "").strip() or None,
                 )
                 session.add(doc)
@@ -172,11 +190,14 @@ def import_reddit(session, raw_path: Path) -> int:
         if not text and not title:
             continue
         content = f"{title}\n{text}".strip() if title else text
+        url = (item.get("url") or item.get("URL") or "").strip() or None
+        if _already_exists(session, "reddit", url=url, content=content):
+            continue
         doc = ContextDocumentDB(
             source="reddit",
             title=title[:500] if title else None,
             content=content,
-            url=(item.get("url") or item.get("URL") or "").strip() or None,
+            url=url,
             published_at=(item.get("created_at") or item.get("Data") or "").strip() or None,
         )
         session.add(doc)
@@ -200,6 +221,8 @@ def import_bluesky(session, raw_path: Path) -> int:
             text = (item.get("text") or item.get("Texto") or "").strip()
             if not text:
                 continue
+            if _already_exists(session, "bluesky", content=text):
+                continue
             doc = ContextDocumentDB(
                 source="bluesky",
                 title=None,
@@ -214,6 +237,8 @@ def import_bluesky(session, raw_path: Path) -> int:
             for row in csv.DictReader(f):
                 text = (row.get("Texto") or row.get("text") or "").strip()
                 if not text:
+                    continue
+                if _already_exists(session, "bluesky", content=text):
                     continue
                 doc = ContextDocumentDB(
                     source="bluesky",
@@ -238,17 +263,7 @@ def main(force: bool = False):
     session = Session()
 
     existing = session.query(ContextDocumentDB).count()
-    if existing > 0:
-        if not force:
-            print(f"[INFO] Já existem {existing} documentos importados.")
-            resp = input("Reimportar tudo? (s/N): ").strip().lower()
-            if resp != "s":
-                print("Importação cancelada.")
-                session.close()
-                return
-        session.query(ContextDocumentDB).delete()
-        session.commit()
-        print("[INFO] Documentos anteriores removidos.")
+    print(f"[INFO] Documentos existentes na base de dados: {existing}")
 
     # Usa R2 se as credenciais estiverem definidas, caso contrário usa caminho local
     if os.getenv("R2_ENDPOINT_URL") and os.getenv("R2_ACCESS_KEY_ID"):
@@ -268,8 +283,10 @@ def main(force: bool = False):
     n_bluesky = import_bluesky(session, raw_path)
     print(f"[OK] Bluesky importado: {n_bluesky}")
 
-    total = n_news + n_reddit + n_bluesky
-    print(f"\n[CONCLUÍDO] Total de documentos importados: {total}")
+    novos = n_news + n_reddit + n_bluesky
+    total = existing + novos
+    print(f"\n[CONCLUÍDO] Novos documentos importados: {novos}")
+    print(f"[CONCLUÍDO] Total na base de dados: {total}")
 
     session.close()
 
