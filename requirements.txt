@@ -13,3 +13,4 @@ python-jose[cryptography]
 passlib[bcrypt]
 pytest
 httpx2
+pyodbc

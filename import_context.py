@@ -20,11 +20,35 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from urllib.parse import quote_plus
+
+from dotenv import load_dotenv
 from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine, and_
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+load_dotenv()
+
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_URL = f"sqlite:///{BASE_DIR / 'incidents.db'}"
+
+
+def _build_database_url() -> str:
+    server = os.getenv("DB_SERVER")
+    database = os.getenv("DB_NAME")
+
+    if server and database:
+        driver = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")
+        conn_str = (
+            f"DRIVER={{{driver}}};"
+            f"SERVER={server};"
+            f"DATABASE={database};"
+            f"Trusted_Connection=yes;"
+        )
+        return f"mssql+pyodbc:///?odbc_connect={quote_plus(conn_str)}"
+
+    return f"sqlite:///{BASE_DIR / 'incidents.db'}"
+
+
+DATABASE_URL = _build_database_url()
 
 Base = declarative_base()
 
@@ -257,7 +281,10 @@ def import_bluesky(session, raw_path: Path) -> int:
 
 
 def main(force: bool = False):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+    connect_args = {}
+    if DATABASE_URL.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
+    engine = create_engine(DATABASE_URL, connect_args=connect_args)
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine)
     session = Session()

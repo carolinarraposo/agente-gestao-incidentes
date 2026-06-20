@@ -63,21 +63,21 @@ class IncidentDB(Base):
     __tablename__ = "incidents"
 
     id = Column(Integer, primary_key=True, index=True)
-    citizen_id = Column(String, index=True, nullable=False)
+    citizen_id = Column(String(100), index=True, nullable=False)
 
-    incident_type = Column(String, nullable=True)
+    incident_type = Column(String(50), nullable=True)
     description = Column(Text, nullable=False)
-    location = Column(String, nullable=True)
+    location = Column(String(500), nullable=True)
 
-    priority = Column(String, nullable=True)
+    priority = Column(String(20), nullable=True)
     priority_justification = Column(Text, nullable=True)
 
     risk_analysis = Column(Text, nullable=True)
 
-    department = Column(String, nullable=True)
-    protocol = Column(String, unique=True, index=True, nullable=True)
-    status = Column(String, default=TicketStatus.RECEBIDO.value)
-    authenticity_flag = Column(String, nullable=True)
+    department = Column(String(100), nullable=True)
+    protocol = Column(String(50), unique=True, index=True, nullable=True)
+    status = Column(String(50), default=TicketStatus.RECEBIDO.value)
+    authenticity_flag = Column(String(20), nullable=True)
     extra_data = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=_utcnow)
@@ -90,10 +90,10 @@ class MessageDB(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    citizen_id = Column(String, index=True, nullable=False)
+    citizen_id = Column(String(100), index=True, nullable=False)
     incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=True)
 
-    sender = Column(String, nullable=False)  # citizen / agent
+    sender = Column(String(20), nullable=False)  # citizen / agent
     content = Column(Text, nullable=False)
 
     created_at = Column(DateTime, default=_utcnow)
@@ -105,8 +105,8 @@ class StatusUpdateDB(Base):
     __tablename__ = "status_updates"
 
     id = Column(Integer, primary_key=True, index=True)
-    protocol = Column(String, index=True, nullable=False)
-    status = Column(String, nullable=False)
+    protocol = Column(String(50), index=True, nullable=False)
+    status = Column(String(50), nullable=False)
     message = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=_utcnow)
@@ -115,9 +115,9 @@ class StreetDB(Base):
     __tablename__ = "streets"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    name_normalized = Column(String, index=True, nullable=False)
-    freguesia = Column(String, index=True, nullable=False)
+    name = Column(String(300), nullable=False)
+    name_normalized = Column(String(300), index=True, nullable=False)
+    freguesia = Column(String(100), index=True, nullable=False)
     length_m = Column(Integer, nullable=True)
 
 
@@ -125,9 +125,9 @@ class UserDB(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    role = Column(String, nullable=False, default="cidadao")  # cidadao | funcionario
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, default="cidadao")  # cidadao | funcionario
     created_at = Column(DateTime, default=_utcnow)
 
 
@@ -138,8 +138,8 @@ class StatusHistoryDB(Base):
 
     incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=False)
 
-    old_status = Column(String, nullable=True)
-    new_status = Column(String, nullable=False)
+    old_status = Column(String(50), nullable=True)
+    new_status = Column(String(50), nullable=False)
 
     message = Column(Text, nullable=True)
 

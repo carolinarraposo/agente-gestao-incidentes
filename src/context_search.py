@@ -1,17 +1,10 @@
 import re
-from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
+from src.database import engine
 from src.logger import logger
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATABASE_URL = f"sqlite:///{BASE_DIR / 'incidents.db'}"
-
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine)
 
 MAX_RESULTS = 5
 MAX_TEXT_LENGTH = 300
@@ -73,10 +66,8 @@ def _keywords_from_incident(
 def _table_exists() -> bool:
     try:
         with engine.connect() as conn:
-            result = conn.execute(text(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='context_documents'"
-            ))
-            return result.fetchone() is not None
+            conn.execute(text("SELECT COUNT(*) FROM context_documents"))
+            return True
     except Exception:
         return False
 
