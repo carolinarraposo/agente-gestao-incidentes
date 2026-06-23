@@ -118,7 +118,6 @@ class StreetDB(Base):
     name = Column(String(300), nullable=False)
     name_normalized = Column(String(300), index=True, nullable=False)
     freguesia = Column(String(100), index=True, nullable=False)
-    length_m = Column(Integer, nullable=True)
 
 
 class UserDB(Base):
