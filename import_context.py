@@ -280,6 +280,44 @@ def import_bluesky(session, raw_path: Path) -> int:
     return count
 
 
+def import_youtube(session, raw_path: Path) -> int:
+    filepath = raw_path / "youtube_posts.json"
+    if not filepath.exists():
+        print(f"[AVISO] {filepath.name} não encontrado, a saltar.")
+        return 0
+
+    count = 0
+    with open(filepath, encoding="utf-8", errors="ignore") as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        return 0
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        text = (item.get("text") or "").strip()
+        title = (item.get("title") or "").strip()
+        if not text and not title:
+            continue
+        content = f"{title}\n{text}".strip() if title else text
+        url = (item.get("url") or "").strip() or None
+        if _already_exists(session, "youtube", url=url, content=content):
+            continue
+        doc = ContextDocumentDB(
+            source="youtube",
+            title=title[:500] if title else None,
+            content=content,
+            url=url,
+            published_at=(item.get("created_at") or "").strip() or None,
+        )
+        session.add(doc)
+        count += 1
+
+    session.commit()
+    return count
+
+
 def main(force: bool = False):
     connect_args = {}
     if DATABASE_URL.startswith("sqlite"):
@@ -310,7 +348,10 @@ def main(force: bool = False):
     n_bluesky = import_bluesky(session, raw_path)
     print(f"[OK] Bluesky importado: {n_bluesky}")
 
-    novos = n_news + n_reddit + n_bluesky
+    n_youtube = import_youtube(session, raw_path)
+    print(f"[OK] YouTube importado: {n_youtube}")
+
+    novos = n_news + n_reddit + n_bluesky + n_youtube
     total = existing + novos
     print(f"\n[CONCLUÍDO] Novos documentos importados: {novos}")
     print(f"[CONCLUÍDO] Total na base de dados: {total}")
