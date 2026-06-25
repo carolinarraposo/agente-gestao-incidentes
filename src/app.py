@@ -4,6 +4,8 @@ import json
 import subprocess
 import sys
 
+from typing import Annotated
+
 from fastapi import FastAPI, File, HTTPException, Depends, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -122,6 +124,33 @@ app.add_middleware(
 
 LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(LOCAL_UPLOAD_DIR)), name="uploads")
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    for name, comp in schema.get("components", {}).get("schemas", {}).items():
+        if "upload" in name.lower():
+            comp["properties"] = {
+                "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "title": "File"
+                }
+            }
+            comp["required"] = ["file"]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
 
 
 @app.get("/")
@@ -511,10 +540,10 @@ def get_citizen_updates(
     )
 
 
-@app.post("/upload/{protocol}", response_model=list[AttachmentResponse], tags=["attachments"])
-def upload_attachments(
+@app.post("/upload/{protocol}", response_model=AttachmentResponse, tags=["attachments"])
+def upload_attachment(
     protocol: str,
-    files: list[UploadFile] = File(...),
+    file: Annotated[UploadFile, File(media_type="multipart/form-data")],
     db: Session = Depends(get_db),
 ):
     incident = (
@@ -526,41 +555,36 @@ def upload_attachments(
     if not incident:
         raise HTTPException(status_code=404, detail="Ocorrência não encontrada.")
 
-    results = []
+    file_bytes = file.file.read()
+    error = validate_file(file.filename, len(file_bytes))
+    if error:
+        raise HTTPException(status_code=400, detail=error)
 
-    for file in files:
-        file_bytes = file.file.read()
-        error = validate_file(file.filename, len(file_bytes))
-        if error:
-            raise HTTPException(status_code=400, detail=f"{file.filename}: {error}")
+    storage_key, url = upload_file(file_bytes, file.filename, file.content_type)
 
-        storage_key, url = upload_file(file_bytes, file.filename, file.content_type)
+    attachment = AttachmentDB(
+        incident_id=incident.id,
+        filename=file.filename,
+        content_type=file.content_type,
+        storage_key=storage_key,
+        url=url,
+        size_bytes=len(file_bytes),
+    )
 
-        attachment = AttachmentDB(
-            incident_id=incident.id,
-            filename=file.filename,
-            content_type=file.content_type,
-            storage_key=storage_key,
-            url=url,
-            size_bytes=len(file_bytes),
-        )
+    db.add(attachment)
+    db.commit()
+    db.refresh(attachment)
 
-        db.add(attachment)
-        db.commit()
-        db.refresh(attachment)
+    logger.info(f"Anexo guardado | protocolo={protocol} | ficheiro={file.filename}")
 
-        results.append(AttachmentResponse(
-            id=attachment.id,
-            filename=attachment.filename,
-            content_type=attachment.content_type,
-            url=attachment.url,
-            size_bytes=attachment.size_bytes,
-            created_at=attachment.created_at,
-        ))
-
-        logger.info(f"Anexo guardado | protocolo={protocol} | ficheiro={file.filename}")
-
-    return results
+    return AttachmentResponse(
+        id=attachment.id,
+        filename=attachment.filename,
+        content_type=attachment.content_type,
+        url=attachment.url,
+        size_bytes=attachment.size_bytes,
+        created_at=attachment.created_at,
+    )
 
 
 @app.get("/attachments/{protocol}", response_model=list[AttachmentResponse], tags=["attachments"])
