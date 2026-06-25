@@ -130,6 +130,21 @@ class UserDB(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class AttachmentDB(Base):
+    __tablename__ = "attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=False)
+    filename = Column(String(500), nullable=False)
+    content_type = Column(String(100), nullable=False)
+    storage_key = Column(String(500), nullable=False)
+    url = Column(String(1000), nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    incident = relationship("IncidentDB")
+
+
 class StatusHistoryDB(Base):
     __tablename__ = "status_history"
 
@@ -212,3 +227,12 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class AttachmentResponse(BaseModel):
+    id: int
+    filename: str
+    content_type: str
+    url: Optional[str]
+    size_bytes: Optional[int]
+    created_at: datetime
