@@ -4,8 +4,9 @@ import json
 import subprocess
 import sys
 
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, File, HTTPException, Depends, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,8 @@ from src.models import (
     IncidentDB,
     MessageDB,
     StatusHistoryDB,
+    AttachmentDB,
+    AttachmentResponse,
     CitizenUpdate,
     CitizenUpdatesResponse,
     RegisterRequest,
@@ -28,6 +31,7 @@ from src.models import (
     TokenResponse,
     UserDB,
 )
+from src.storage import validate_file, upload_file, LOCAL_UPLOAD_DIR
 from src.auth import (
     hash_password,
     verify_password,
@@ -114,6 +118,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(LOCAL_UPLOAD_DIR)), name="uploads")
 
 
 @app.get("/")
@@ -501,3 +509,89 @@ def get_citizen_updates(
         updates=updates,
         total=len(updates)
     )
+
+
+@app.post("/upload/{protocol}", response_model=list[AttachmentResponse], tags=["attachments"])
+def upload_attachments(
+    protocol: str,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+):
+    incident = (
+        db.query(IncidentDB)
+        .filter(IncidentDB.protocol == protocol)
+        .first()
+    )
+
+    if not incident:
+        raise HTTPException(status_code=404, detail="Ocorrência não encontrada.")
+
+    results = []
+
+    for file in files:
+        file_bytes = file.file.read()
+        error = validate_file(file.filename, len(file_bytes))
+        if error:
+            raise HTTPException(status_code=400, detail=f"{file.filename}: {error}")
+
+        storage_key, url = upload_file(file_bytes, file.filename, file.content_type)
+
+        attachment = AttachmentDB(
+            incident_id=incident.id,
+            filename=file.filename,
+            content_type=file.content_type,
+            storage_key=storage_key,
+            url=url,
+            size_bytes=len(file_bytes),
+        )
+
+        db.add(attachment)
+        db.commit()
+        db.refresh(attachment)
+
+        results.append(AttachmentResponse(
+            id=attachment.id,
+            filename=attachment.filename,
+            content_type=attachment.content_type,
+            url=attachment.url,
+            size_bytes=attachment.size_bytes,
+            created_at=attachment.created_at,
+        ))
+
+        logger.info(f"Anexo guardado | protocolo={protocol} | ficheiro={file.filename}")
+
+    return results
+
+
+@app.get("/attachments/{protocol}", response_model=list[AttachmentResponse], tags=["attachments"])
+def get_attachments(
+    protocol: str,
+    db: Session = Depends(get_db),
+):
+    incident = (
+        db.query(IncidentDB)
+        .filter(IncidentDB.protocol == protocol)
+        .first()
+    )
+
+    if not incident:
+        raise HTTPException(status_code=404, detail="Ocorrência não encontrada.")
+
+    attachments = (
+        db.query(AttachmentDB)
+        .filter(AttachmentDB.incident_id == incident.id)
+        .order_by(AttachmentDB.created_at.asc())
+        .all()
+    )
+
+    return [
+        AttachmentResponse(
+            id=a.id,
+            filename=a.filename,
+            content_type=a.content_type,
+            url=a.url,
+            size_bytes=a.size_bytes,
+            created_at=a.created_at,
+        )
+        for a in attachments
+    ]
