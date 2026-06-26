@@ -3,10 +3,11 @@ from typing import Optional
 
 from sqlalchemy import text
 
-from src.database import engine
+from src.database import engine, DATABASE_URL
 from src.logger import logger
 
 MAX_RESULTS = 5
+_IS_MSSQL = DATABASE_URL.startswith("mssql")
 MAX_TEXT_LENGTH = 300
 
 
@@ -91,13 +92,21 @@ def _search_db(keywords: list) -> list:
         )
         params = {f"kw{i}": f"%{k}%" for i, k in enumerate(keywords)}
 
-        query = text(f"""
-            SELECT source, title, content, url, published_at
-            FROM context_documents
-            WHERE {conditions}
-            ORDER BY published_at DESC
-            LIMIT {MAX_RESULTS}
-        """)
+        if _IS_MSSQL:
+            query = text(f"""
+                SELECT TOP {MAX_RESULTS} source, source_name, title, content, url, published_at
+                FROM context_documents
+                WHERE {conditions}
+                ORDER BY published_at DESC
+            """)
+        else:
+            query = text(f"""
+                SELECT source, source_name, title, content, url, published_at
+                FROM context_documents
+                WHERE {conditions}
+                ORDER BY published_at DESC
+                LIMIT {MAX_RESULTS}
+            """)
 
         with engine.connect() as conn:
             rows = conn.execute(query, params).fetchall()
@@ -106,10 +115,11 @@ def _search_db(keywords: list) -> list:
         for row in rows:
             results.append({
                 "source": row[0] or "news",
-                "title": (row[1] or "")[:100],
-                "text": (row[2] or "")[:MAX_TEXT_LENGTH],
-                "url": row[3],
-                "date": (row[4] or "")[:10],
+                "source_name": row[1] or "",
+                "title": (row[2] or "")[:100],
+                "text": (row[3] or "")[:MAX_TEXT_LENGTH],
+                "url": row[4],
+                "date": (row[5] or "")[:10],
             })
 
         return results
@@ -147,8 +157,9 @@ def get_relevant_context(
     for i, r in enumerate(results, 1):
         date_str = f" ({r['date']})" if r["date"] else ""
         title_str = f"{r['title']} — " if r["title"] else ""
+        source_label = r["source_name"] or r["source"].upper()
         lines.append(
-            f"{i}. [{r['source'].upper()}{date_str}] {title_str}{r['text']}"
+            f"{i}. [{source_label}{date_str}] {title_str}{r['text']}"
         )
 
     return "\n".join(lines)
