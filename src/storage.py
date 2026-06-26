@@ -14,9 +14,9 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
 LOCAL_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 def _get_r2_client():
-    endpoint = os.getenv("R2_ENDPOINT_URL")
-    access_key = os.getenv("R2_ACCESS_KEY_ID")
-    secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
+    endpoint = os.getenv("ATTACHMENTS_R2_ENDPOINT_URL")
+    access_key = os.getenv("ATTACHMENTS_R2_ACCESS_KEY_ID")
+    secret_key = os.getenv("ATTACHMENTS_R2_SECRET_ACCESS_KEY")
 
     if not all([endpoint, access_key, secret_key]):
         return None
@@ -49,7 +49,7 @@ def upload_file(file_bytes: bytes, filename: str, content_type: str) -> tuple[st
     storage_key = f"attachments/{uuid.uuid4().hex}{ext}"
 
     client = _get_r2_client()
-    bucket = os.getenv("R2_BUCKET_NAME")
+    bucket = os.getenv("ATTACHMENTS_R2_BUCKET_NAME")
 
     if client and bucket:
         try:
@@ -59,8 +59,8 @@ def upload_file(file_bytes: bytes, filename: str, content_type: str) -> tuple[st
                 Body=file_bytes,
                 ContentType=content_type,
             )
-            r2_public = os.getenv("R2_PUBLIC_URL", "")
-            url = f"{r2_public}/{storage_key}" if r2_public else None
+            r2_public = os.getenv("ATTACHMENTS_R2_PUBLIC_URL", "")
+            url = f"{r2_public}/{bucket}/{storage_key}" if r2_public else None
             logger.info(f"Ficheiro enviado para R2 | key={storage_key}")
             return storage_key, url
         except Exception as e:
