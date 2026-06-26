@@ -16,6 +16,7 @@ import csv
 import json
 import os
 import sys
+from urllib.parse import urlparse
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +67,7 @@ class ContextDocumentDB(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     source = Column(String, nullable=False)
+    source_name = Column(String, nullable=True)
     title = Column(Text, nullable=True)
     content = Column(Text, nullable=False)
     url = Column(String, nullable=True)
@@ -73,16 +75,27 @@ class ContextDocumentDB(Base):
     imported_at = Column(DateTime, default=datetime.utcnow)
 
 
-def _already_exists(session, source: str, url: str = None, content: str = None) -> bool:
+def _already_exists(session, source_name: str, url: str = None, content: str = None) -> bool:
     if url:
         return session.query(ContextDocumentDB).filter(
-            and_(ContextDocumentDB.source == source, ContextDocumentDB.url == url)
+            and_(ContextDocumentDB.source_name == source_name, ContextDocumentDB.url == url)
         ).first() is not None
     if content:
         return session.query(ContextDocumentDB).filter(
-            and_(ContextDocumentDB.source == source, ContextDocumentDB.content == content)
+            and_(ContextDocumentDB.source_name == source_name, ContextDocumentDB.content == content)
         ).first() is not None
     return False
+
+
+def _extract_site_name(url: str) -> str:
+    if not url:
+        return "Google News"
+    try:
+        domain = urlparse(url).netloc
+        domain = domain.replace("www.", "")
+        return domain or "Google News"
+    except Exception:
+        return "Google News"
 
 
 def download_from_r2() -> Path:
@@ -156,10 +169,12 @@ def import_news(session, raw_path: Path) -> int:
             url = (item.get("url") or "").strip() or None
             if not text:
                 continue
-            if _already_exists(session, "news", url=url, content=text):
+            site_name = _extract_site_name(url)
+            if _already_exists(session, site_name, url=url, content=text):
                 continue
             doc = ContextDocumentDB(
                 source="news",
+                source_name=site_name,
                 title=title[:500] if title else None,
                 content=text,
                 url=url,
@@ -175,10 +190,12 @@ def import_news(session, raw_path: Path) -> int:
                 url = (row.get("url") or "").strip() or None
                 if not text:
                     continue
-                if _already_exists(session, "news", url=url, content=text):
+                site_name = _extract_site_name(url)
+                if _already_exists(session, site_name, url=url, content=text):
                     continue
                 doc = ContextDocumentDB(
                     source="news",
+                    source_name=site_name,
                     title=title[:500] if title else None,
                     content=text,
                     url=url,
@@ -215,10 +232,11 @@ def import_reddit(session, raw_path: Path) -> int:
             continue
         content = f"{title}\n{text}".strip() if title else text
         url = (item.get("url") or item.get("URL") or "").strip() or None
-        if _already_exists(session, "reddit", url=url, content=content):
+        if _already_exists(session, "Reddit", url=url, content=content):
             continue
         doc = ContextDocumentDB(
-            source="reddit",
+            source="social_media",
+            source_name="Reddit",
             title=title[:500] if title else None,
             content=content,
             url=url,
@@ -245,10 +263,11 @@ def import_bluesky(session, raw_path: Path) -> int:
             text = (item.get("text") or item.get("Texto") or "").strip()
             if not text:
                 continue
-            if _already_exists(session, "bluesky", content=text):
+            if _already_exists(session, "Bluesky", content=text):
                 continue
             doc = ContextDocumentDB(
-                source="bluesky",
+                source="social_media",
+                source_name="Bluesky",
                 title=None,
                 content=text,
                 url=None,
@@ -262,10 +281,11 @@ def import_bluesky(session, raw_path: Path) -> int:
                 text = (row.get("Texto") or row.get("text") or "").strip()
                 if not text:
                     continue
-                if _already_exists(session, "bluesky", content=text):
+                if _already_exists(session, "Bluesky", content=text):
                     continue
                 doc = ContextDocumentDB(
-                    source="bluesky",
+                    source="social_media",
+                    source_name="Bluesky",
                     title=None,
                     content=text,
                     url=None,
@@ -302,10 +322,11 @@ def import_youtube(session, raw_path: Path) -> int:
             continue
         content = f"{title}\n{text}".strip() if title else text
         url = (item.get("url") or "").strip() or None
-        if _already_exists(session, "youtube", url=url, content=content):
+        if _already_exists(session, "YouTube", url=url, content=content):
             continue
         doc = ContextDocumentDB(
-            source="youtube",
+            source="social_media",
+            source_name="YouTube",
             title=title[:500] if title else None,
             content=content,
             url=url,
