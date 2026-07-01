@@ -16,12 +16,23 @@ def _build_database_url() -> str:
 
     if server and database:
         driver = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")
-        conn_str = (
-            f"DRIVER={{{driver}}};"
-            f"SERVER={server};"
-            f"DATABASE={database};"
-            f"Trusted_Connection=yes;"
-        )
+        user = os.getenv("DB_USER")
+        password = os.getenv("DB_PASSWORD")
+        if user and password:
+            conn_str = (
+                f"DRIVER={{{driver}}};"
+                f"SERVER={server};"
+                f"DATABASE={database};"
+                f"UID={user};"
+                f"PWD={password};"
+            )
+        else:
+            conn_str = (
+                f"DRIVER={{{driver}}};"
+                f"SERVER={server};"
+                f"DATABASE={database};"
+                f"Trusted_Connection=yes;"
+            )
         return f"mssql+pyodbc:///?odbc_connect={quote_plus(conn_str)}"
 
     return "sqlite:///./incidents.db"
