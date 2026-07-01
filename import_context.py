@@ -47,6 +47,7 @@ def _build_database_url() -> str:
                 f"DATABASE={database};"
                 f"UID={user};"
                 f"PWD={password};"
+                f"TrustServerCertificate=yes;"
             )
         else:
             conn_str = (
@@ -54,6 +55,7 @@ def _build_database_url() -> str:
                 f"SERVER={server};"
                 f"DATABASE={database};"
                 f"Trusted_Connection=yes;"
+                f"TrustServerCertificate=yes;"
             )
         return f"mssql+pyodbc:///?odbc_connect={quote_plus(conn_str)}"
 
